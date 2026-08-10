@@ -2,6 +2,13 @@
 
 All notable changes to Kubeli will be documented in this file.
 
+## [0.3.87] - 2026-08-10
+
+- Added a restart action for deployments in the workloads context menu
+- Fixed Monaco editor 0.56 subpath imports and the hover option
+- Updated monaco-editor to 0.56.0, rmcp to 3.1.0, base64 to 0.23.0, and @testing-library/jest-dom to 7.0.0
+- Patched transitive dependencies flagged by security advisories
+
 ## [0.3.86] - 2026-08-02
 
 - Added signed APT and DNF repositories for Linux installs and updates
