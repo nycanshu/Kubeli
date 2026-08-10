@@ -18,7 +18,6 @@ import { getErrorMessage } from "@/lib/types/errors";
 
 export interface RestartDialogState {
   open: boolean;
-  resourceType: string;
   name: string;
   namespace: string;
   onSuccess?: () => void;
@@ -52,9 +51,7 @@ export function RestartDeploymentDialog({ state, onClose }: RestartDeploymentDia
     <AlertDialog open={state?.open} onOpenChange={(open) => !open && onClose()}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>
-            {t("workloads.restart")} {state?.resourceType}?
-          </AlertDialogTitle>
+          <AlertDialogTitle>{t("workloads.restart")}?</AlertDialogTitle>
           <AlertDialogDescription>
             {t("workloads.restartConfirm", { name: state?.name || "" })}
             {state?.namespace && (

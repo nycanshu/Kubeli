@@ -448,7 +448,7 @@ function DashboardContent() {
   };
 
   const handleRestartFromContext = (name: string, namespace: string, onSuccess?: () => void) => {
-    setRestartDialog({ open: true, resourceType: "deployment", name, namespace, onSuccess });
+    setRestartDialog({ open: true, name, namespace, onSuccess });
   };
 
   const handleSetImageFromContext = async (
