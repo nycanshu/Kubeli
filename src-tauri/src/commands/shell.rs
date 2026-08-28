@@ -148,6 +148,18 @@ impl Default for ShellSessionManager {
     }
 }
 
+/// Command to exec when the UI does not pass one: bash, then ash, then sh.
+/// `clear` uses `;` so a missing `clear` binary does not skip bash.
+fn resolve_shell_command(command: Option<Vec<String>>) -> Vec<String> {
+    command.unwrap_or_else(|| {
+        vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "clear; (bash || ash || sh)".to_string(),
+        ]
+    })
+}
+
 /// Start an interactive shell session in a pod container
 #[command]
 pub async fn shell_start(
@@ -180,11 +192,7 @@ pub async fn shell_start(
             .map(|c| c.name.clone())
     });
 
-    // Default to sh if no command specified
-    let cmd = options
-        .command
-        .clone()
-        .unwrap_or_else(|| vec!["sh".to_string()]);
+    let cmd = resolve_shell_command(options.command.clone());
 
     let mut attach_params = AttachParams::interactive_tty();
     if let Some(c) = &container {
@@ -805,7 +813,21 @@ pub async fn node_shell_cleanup(
 
 #[cfg(test)]
 mod tests {
-    use super::{take_valid_utf8, ShellEvent};
+    use super::{resolve_shell_command, take_valid_utf8, ShellEvent};
+
+    #[test]
+    fn pod_shell_defaults_to_bash_ash_sh_probe() {
+        assert_eq!(
+            resolve_shell_command(None),
+            vec!["sh", "-c", "clear; (bash || ash || sh)"]
+        );
+    }
+
+    #[test]
+    fn explicit_command_is_kept() {
+        let cmd = vec!["powershell".to_string()];
+        assert_eq!(resolve_shell_command(Some(cmd.clone())), cmd);
+    }
 
     // A session cut mid-run is recoverable; only a connection that never
     // established is an Error. The terminal branches on this reason to decide
