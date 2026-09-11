@@ -148,16 +148,25 @@ impl Default for ShellSessionManager {
     }
 }
 
-/// Command to exec when the UI does not pass one: bash, then ash, then sh.
-/// `clear` uses `;` so a missing `clear` binary does not skip bash.
+/// Shell probe: bash, then ash, then sh. `command -v` probes silently (no
+/// "not found" noise in the terminal) and `exec` replaces the outer sh, so
+/// the shell's exit status ends the session. A plain `bash || ash || sh`
+/// would drop the user into ash/sh after a bash that exits non-zero.
+/// No `clear` here: it wipes the xterm scrollback that reconnects keep.
+const SHELL_PROBE: &str = "command -v bash >/dev/null 2>&1 && exec bash; \
+     command -v ash >/dev/null 2>&1 && exec ash; exec sh";
+
+fn shell_probe_command(prefix: &str) -> Vec<String> {
+    vec![
+        "sh".to_string(),
+        "-c".to_string(),
+        format!("{prefix}{SHELL_PROBE}"),
+    ]
+}
+
+/// Command to exec when the UI does not pass one.
 fn resolve_shell_command(command: Option<Vec<String>>) -> Vec<String> {
-    command.unwrap_or_else(|| {
-        vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            "clear; (bash || ash || sh)".to_string(),
-        ]
-    })
+    command.unwrap_or_else(|| shell_probe_command(""))
 }
 
 /// Start an interactive shell session in a pod container
@@ -676,12 +685,10 @@ pub async fn node_shell_start(
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     }
 
-    // Exec into the debug pod with a proper shell (try bash, ash, sh in order)
-    let exec_cmd = vec![
-        "sh".to_string(),
-        "-c".to_string(),
-        "((clear && bash) || (clear && ash) || (clear && sh))".to_string(),
-    ];
+    // Exec into the debug pod with a proper shell (try bash, ash, sh in order).
+    // `clear;` wipes the pod-creation status lines; `;` keeps the probe going
+    // when the image has no `clear`.
+    let exec_cmd = shell_probe_command("clear; ");
     let attach_params = AttachParams::interactive_tty().container("node-shell");
 
     let (input_tx, mut input_rx) = mpsc::channel::<ShellInput>(256);
@@ -813,14 +820,50 @@ pub async fn node_shell_cleanup(
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_shell_command, take_valid_utf8, ShellEvent};
+    use super::{resolve_shell_command, take_valid_utf8, ShellEvent, SHELL_PROBE};
+
+    // Regression for the probe semantics: bash is preferred, and a bash that
+    // exits non-zero must end the session instead of falling through to sh.
+    #[cfg(unix)]
+    #[test]
+    fn shell_probe_prefers_bash_and_does_not_fall_through() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::{Command, Stdio};
+
+        let dir = std::env::temp_dir().join(format!("kubeli-probe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake_bash = dir.join("bash");
+        std::fs::write(&fake_bash, "#!/bin/sh\necho fake-bash\nexit 3\n").unwrap();
+        std::fs::set_permissions(&fake_bash, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = format!(
+            "{}:{}",
+            dir.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+
+        let out = Command::new("sh")
+            .args(["-c", SHELL_PROBE])
+            .env("PATH", path)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "fake-bash");
+        // A fall-through to `sh` would read EOF from stdin and exit 0.
+        assert_eq!(out.status.code(), Some(3));
+        assert!(
+            out.stderr.is_empty(),
+            "probe must be silent: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 
     #[test]
-    fn pod_shell_defaults_to_bash_ash_sh_probe() {
-        assert_eq!(
-            resolve_shell_command(None),
-            vec!["sh", "-c", "clear; (bash || ash || sh)"]
-        );
+    fn pod_shell_probe_has_no_clear() {
+        let cmd = resolve_shell_command(None);
+        assert_eq!(&cmd[..2], ["sh", "-c"]);
+        assert!(!cmd[2].contains("clear"));
     }
 
     #[test]
